@@ -17,7 +17,7 @@
 
 // Labels e endpoint por macro
 #define SENSOR_LABEL "Device01"
-#define REST_ENDPOINT "http://host.wokwi.internal:8080/data"
+#define REST_ENDPOINT "http://host.wokwi.internal:9000/data"
 
 // Chaves JSON usadas no POST
 #define JSON_KEY_LABEL "label"
