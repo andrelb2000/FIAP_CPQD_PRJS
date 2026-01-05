@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <PubSubClient.h>
 #include <vector>
 #include <algorithm>
 #include "SensorData.h"
@@ -9,12 +10,60 @@
 const char* WIFI_SSID = "Wokwi-GUEST";
 const char* WIFI_PASSWORD = "";
 
+const char* MQTT_BROKER = "industrial.api.ubidots.com";
+const int   MQTT_PORT   = 1883;
+const char* MQTT_CLIENTID = "";
+
+const char* UBIDOTS_TOKEN = "BBUS-MqjWH3tL051NmtmeNEZ38K8SCwPydT"; // Username no MQTT
+const char* MQTT_SUB_TOPIC = "/v1.6/devices/fiap_ambiente/parada/lv";
+const char* MQTT_PUB_TOPIC = "/v1.6/devices/fiap_ambiente";
+
+char msg[255];
+int   parada = 0;
+
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
 WebServer server(80);
+SensorData agg = SensorData();
 
 // Array global para guardar dados de múltiplos dispositivos
 std::vector<SensorData> devices;
 bool hasData = false;
 
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("[MQTT] Mensagem em [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  payload[length] = 0;
+  if(strcmp( (const char *)payload,"1.0")==0){
+    parada = 1;
+  }else{
+    parada = 0;
+  }
+  
+  Serial.println();
+}
+void connectMQTT() {
+  mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+  while (!mqtt.connected()) {
+    Serial.print("[MQTT] Conectando...");
+ //   if (mqtt.connect(MQTT_CLIENTID)) {
+
+    if (mqtt.connect(MQTT_CLIENTID,UBIDOTS_TOKEN,"")) {
+      Serial.println(" conectado!");
+      mqtt.subscribe(MQTT_SUB_TOPIC);
+    } else {
+      Serial.print(" falhou (rc=");
+      Serial.print(mqtt.state());
+      Serial.println("). Tentando novamente em 2s...");
+      delay(2000);
+    }
+  }
+}
 void connectWiFi() {
   Serial.print("[WiFi] Conectando...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -68,7 +117,13 @@ SensorData aggregateDevices(const std::vector<SensorData> &list) {
     for (double v : d.temps) { sum += v; ++count; }
 
     // Registra o maior nível de gás observado entre todos os dispositivos
-    for (int g : d.gasLevels) if (g > maxGas) maxGas = g;
+    for (int g : d.gasLevels) {
+        if ((g > maxGas)) 
+           maxGas = g;
+        Serial.print("Max gás atual: ");
+        Serial.println(g);
+    }
+
   }
 
   // Calcula média apenas se houver ao menos uma leitura
@@ -79,10 +134,8 @@ SensorData aggregateDevices(const std::vector<SensorData> &list) {
   out.label = labels;
   if (count > 0) out.temps.push_back(avg);    // média das temperaturas
   if (maxGas >= 0) out.gasLevels.push_back(maxGas); // máximo de gás
-
   return out;
 }
-
 void handlePostData() {
   Serial.println("\n Entrei no POST/data (sensor single values)");
   if (server.method() != HTTP_POST) {
@@ -120,7 +173,7 @@ void handlePostData() {
     String sGas = server.arg("gas");
     if (label.length() > 0 && sTemp.length() > 0 && sGas.length() > 0) {
       double tempVal = sTemp.toFloat();
-      int gasVal = sGas.toInt();
+      double gasVal = sGas.toFloat();
       incoming.label = label;
       incoming.add(tempVal, gasVal);
       valid = true;
@@ -139,7 +192,8 @@ void handlePostData() {
     if (d.label == incoming.label) {
       // Adiciona apenas um novo valor por requisição
       if (!incoming.temps.empty() && !incoming.gasLevels.empty()) {
-        d.add(incoming.temps[0], incoming.gasLevels[0]);
+        d.temps[0] = incoming.temps[0];
+        d.gasLevels[0] = incoming.gasLevels[0];
       }
       found = true;
       break;
@@ -158,10 +212,11 @@ void handlePostData() {
   Serial.print(" Nível de gás recebido: ");
   Serial.println(incoming.gasLevels[0]);
   
+  agg = aggregateDevices(devices);
+
   server.send(200, "application/json", "{\"status\":\"ok\"}");
   server.client().stop();
 }
-
 void handleGetData() {
   Serial.println("\n Entrei no GET/data (aggregate)");
   if (!hasData) {
@@ -182,7 +237,6 @@ void handleGetData() {
   serializeJson(doc, out);
   server.send(200, "application/json", out);
 }
-
 void handleStatus() {
   String out = "{";
   out += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
@@ -191,18 +245,40 @@ void handleStatus() {
   server.send(200, "application/json", out);
 }
 
+unsigned long lastMsg = 0; 
 void setup() {
   Serial.begin(115200);
   connectWiFi();
-
   server.on("/data", HTTP_POST, handlePostData);
   server.on("/data", HTTP_GET, handleGetData);
   server.on("/status", HTTP_GET, handleStatus);
-
   server.begin();
   Serial.println("REST server iniciado em /data (POST/GET)");
+
+  connectMQTT();
 }
 
 void loop() {
-  server.handleClient();
+  if (!mqtt.connected()) 
+     connectMQTT();
+  mqtt.loop();
+
+  unsigned long now = millis();
+  if(parada){
+     Serial.println("Sistema parado ");
+  }else{
+    if (now - lastMsg > 500) {
+      lastMsg = now;
+      server.handleClient();
+      sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i}",
+                  agg.avgTemp(),agg.avgGas(),parada); 
+      if(devices.size()>0){
+        Serial.print("Dispositivos agregados: ");
+        Serial.println(devices.size());
+        mqtt.publish(MQTT_PUB_TOPIC, msg);
+        Serial.print("[MQTT] Publicado: ");
+        Serial.println(msg);
+      }
+    }
+  }
 }

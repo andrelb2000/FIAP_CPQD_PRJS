@@ -17,7 +17,7 @@
 #define GAS_PIN 35
 
 // Labels e endpoint por macro
-#define SENSOR_LABEL "Device01"
+#define SENSOR_LABEL "Device03"
 #define REST_ENDPOINT "http://host.wokwi.internal:9000/data"
 
 // Chaves JSON usadas no POST
@@ -45,10 +45,7 @@ void connectWiFi() {
 unsigned long lastMsg = 0;
 void setup() {
   Serial.begin(115200);
-  dht.begin();
-  Serial.println("DHT Inicializado!");
   connectWiFi();
-
 }
 
 // Função responsável por fazer a leitura dos sensores e armazenar no objeto `sensor`.
@@ -58,12 +55,12 @@ void readSensors() {
     Serial.println("Falha ao ler do sensor DHT!");
     rawTemp = 0.0;
   }
-
   analogReadResolution(12);
   float rawGas = (float) analogRead(GAS_PIN);
   if(rawGas < minGasLevel) minGasLevel = rawGas;
   if(rawGas > maxGasLevel) maxGasLevel = rawGas;
   float calibratedGas = (rawGas - minGasLevel) / (maxGasLevel - minGasLevel) * 100.0;
+
   // evita valores nan no objeto sensor
   if(isnan(calibratedGas)) {
     calibratedGas = 0.0;

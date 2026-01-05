@@ -17,7 +17,7 @@
 #define GAS_PIN 35
 
 // Labels e endpoint por macro
-#define SENSOR_LABEL "Device01"
+#define SENSOR_LABEL "Device02"
 #define REST_ENDPOINT "http://host.wokwi.internal:9000/data"
 
 // Chaves JSON usadas no POST
@@ -29,7 +29,7 @@
 SensorData sensor(SENSOR_LABEL);
 DHT dht(TEMP_PIN, DHT22);
 
-float minGasLevel = 4095.0; // Valor máximo para ADC 12 bits
+float minGasLevel = 4095.0; // Valor máximo para ADC 10 bits
 float maxGasLevel = 0.0;    // Valor mínimo para ADC 10 bits
 
 void connectWiFi() {
@@ -45,10 +45,9 @@ void connectWiFi() {
 unsigned long lastMsg = 0;
 void setup() {
   Serial.begin(115200);
+  connectWiFi();
   dht.begin();
   Serial.println("DHT Inicializado!");
-  connectWiFi();
-
 }
 
 // Função responsável por fazer a leitura dos sensores e armazenar no objeto `sensor`.
@@ -58,7 +57,6 @@ void readSensors() {
     Serial.println("Falha ao ler do sensor DHT!");
     rawTemp = 0.0;
   }
-
   analogReadResolution(12);
   float rawGas = (float) analogRead(GAS_PIN);
   if(rawGas < minGasLevel) minGasLevel = rawGas;
@@ -123,7 +121,7 @@ void sendSensorAverages() {
 
 void loop() {
   unsigned long now = millis();
-  if (now - lastMsg > 2000) {
+  if (now - lastMsg > 1000) {
     lastMsg = now;
     readSensors();
     Serial.println("Conectado no WiFi há 1s");
