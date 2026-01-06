@@ -16,14 +16,19 @@
 #define TEMP_PIN 15
 #define GAS_PIN 35
 
+#define sample_size 20  // Número de amostras para média móvel
+
 // Labels e endpoint por macro
 #define SENSOR_LABEL "Device02"
-#define REST_ENDPOINT "http://host.wokwi.internal:9000/data"
+#define REST_ENDPOINT1 "http://host.wokwi.internal:9000/data"
+#define REST_ENDPOINT2 "http://host.wokwi.internal:9001/data"
 
 // Chaves JSON usadas no POST
 #define JSON_KEY_LABEL "label"
 #define JSON_KEY_AVG_TEMP "temp"
 #define JSON_KEY_AVG_GAS "gas"
+
+static bool useFirstEndpoint = true;
 
 // Cria o objeto SensorData globalmente para armazenar leituras contínuas
 SensorData sensor(SENSOR_LABEL);
@@ -99,6 +104,8 @@ void sendSensorAverages() {
     Serial.println("Reconectado ao WiFi.");
   }
   HTTPClient http;
+  const char* REST_ENDPOINT = useFirstEndpoint ? REST_ENDPOINT1 : REST_ENDPOINT2;
+
   http.begin(REST_ENDPOINT);
   http.addHeader("Content-Type", "application/json");
   StaticJsonDocument<256> doc;
@@ -115,13 +122,15 @@ void sendSensorAverages() {
     Serial.print("Resposta: "); Serial.println(resp);
   } else {
     Serial.print("Erro envio HTTP: "); Serial.println(httpCode);
+     // Alterna servidor 
+      useFirstEndpoint = !useFirstEndpoint;
   }
   http.end();
 }
-
+int sample_count = 0;
 void loop() {
   unsigned long now = millis();
-  if (now - lastMsg > 1000) {
+  if (now - lastMsg > 2000) {
     lastMsg = now;
     readSensors();
     Serial.println("Conectado no WiFi há 1s");
@@ -130,6 +139,14 @@ void loop() {
     Serial.print("GateWay : ");
     Serial.println(WiFi.gatewayIP());
     // Envia médias para REST service
+    Serial.println("-----------------------------------");
+    Serial.println("Servidor REST: " + String(useFirstEndpoint ? REST_ENDPOINT1 : REST_ENDPOINT2));
+    Serial.println("-----------------------------------");
     sendSensorAverages();
+    if(++sample_count >= sample_size) {
+      sample_count = 0;
+      sensor.clear();
+      Serial.println("Dados do sensor limpos para nova coleta."); 
+    }    
   }
 }

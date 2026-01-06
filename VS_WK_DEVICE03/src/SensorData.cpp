@@ -21,3 +21,7 @@ double SensorData::avgGas() const {
   for (double v : gasLevels) s += v;
   return s / (double)gasLevels.size();
 }
+void SensorData::clear() {
+  temps.clear();
+  gasLevels.clear();
+} 

@@ -22,8 +22,6 @@ public:
 
   // Retorna a média dos níveis de gás; 0.0 se vazio.
   double avgGas() const;
-
-  void clear();
 };
 
 #endif // SENSORDATA_H

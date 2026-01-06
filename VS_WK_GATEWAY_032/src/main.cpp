@@ -18,9 +18,11 @@ const char* UBIDOTS_TOKEN = "BBUS-MqjWH3tL051NmtmeNEZ38K8SCwPydT"; // Username n
 const char* MQTT_SUB_TOPIC = "/v1.6/devices/fiap_ambiente/parada/lv";
 const char* MQTT_PUB_TOPIC = "/v1.6/devices/fiap_ambiente";
 
-#define NOME_CONCENTRADOR 1
 
-char msg[500];
+#define NOME_CONCENTRADOR 2
+
+
+char msg[255];
 int   parada = 0;
 
 WiFiClient espClient;
@@ -77,6 +79,7 @@ void connectWiFi() {
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
 }
+
 String escapeJson(const String &s) {
   String o;
   for (size_t i = 0; i < s.length(); ++i) {
@@ -87,6 +90,7 @@ String escapeJson(const String &s) {
   }
   return o;
 }
+
 // Agrega uma lista de SensorData em um único SensorData
 SensorData aggregateDevices(const std::vector<SensorData> &list) {
   // Resultado: um único SensorData contendo:
@@ -254,6 +258,7 @@ void setup() {
   server.on("/status", HTTP_GET, handleStatus);
   server.begin();
   Serial.println("REST server iniciado em /data (POST/GET)");
+
   connectMQTT();
 }
 
