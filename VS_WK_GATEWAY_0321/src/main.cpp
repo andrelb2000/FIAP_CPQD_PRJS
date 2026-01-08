@@ -22,7 +22,7 @@ const char* MQTT_PUB_TOPIC = "/v1.6/devices/fiap_ambiente";
 #define NOME_CONCENTRADOR 2
 
 
-char msg[255];
+char msg[1000];
 int   parada = 0;
 
 WiFiClient espClient;
@@ -33,6 +33,8 @@ SensorData agg = SensorData();
 // Array global para guardar dados de múltiplos dispositivos
 std::vector<SensorData> devices;
 bool hasData = false;
+bool deviceComprometido = false;
+char securityAlertMsg[] = "DISPOSITIVO OK";
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("[MQTT] Mensagem em [");
@@ -170,6 +172,19 @@ void handlePostData() {
     incoming.label = String((const char*)doc["label"].as<const char*>());
     incoming.add(tempVal, gasVal);
     valid = true;
+
+    if (!doc.containsKey("security") ) {
+      Serial.println(" Alerta: dado sem campo de segurança ");
+    } else {
+      const char* sec = doc["security"];
+      strcpy(securityAlertMsg, sec);
+      Serial.print(" Campo de segurança recebido: ");
+      Serial.println(sec);
+      if(!strcmp(sec,"SEGURO")){
+        deviceComprometido = true;
+      }
+    }
+
   } else {
     // fallback form data
     String label = server.arg("label");
@@ -215,6 +230,8 @@ void handlePostData() {
   Serial.println(incoming.temps[0]);
   Serial.print(" Nível de gás recebido: ");
   Serial.println(incoming.gasLevels[0]);
+  Serial.print("Segurança: ");
+  Serial.println(securityAlertMsg);
   
   agg = aggregateDevices(devices);
 
@@ -268,14 +285,21 @@ void loop() {
   mqtt.loop();
 
   unsigned long now = millis();
-  if(parada){
+  if(parada || deviceComprometido){
      Serial.println("Sistema parado ");
   }else{
     if (now - lastMsg > 500) {
       lastMsg = now;
       server.handleClient();
-      sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li}",
-          agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR); 
+      if(deviceComprometido){
+        Serial.println(" Alerta de dispositivo comprometido! ");
+        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li, \"alerta_seguranca\": \"%s\"}",
+                  agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR, securityAlertMsg);         
+      }else{
+        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li}",
+                agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR); 
+        
+      }
       if(devices.size()>0){
         Serial.print("Dispositivos agregados: ");
         Serial.println(devices.size());
