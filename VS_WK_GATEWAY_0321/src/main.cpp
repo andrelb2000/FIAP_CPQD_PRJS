@@ -29,6 +29,8 @@ WiFiClient espClient;
 PubSubClient mqtt(espClient);
 WebServer server(80);
 SensorData agg = SensorData();
+int securityStatus = 0;
+
 
 // Array global para guardar dados de múltiplos dispositivos
 std::vector<SensorData> devices;
@@ -176,13 +178,14 @@ void handlePostData() {
     if (!doc.containsKey("security") ) {
       Serial.println(" Alerta: dado sem campo de segurança ");
     } else {
-      const char* sec = doc["security"];
-      strcpy(securityAlertMsg, sec);
+      securityStatus = doc["security"].as<int>();
       Serial.print(" Campo de segurança recebido: ");
-      Serial.println(sec);
-      if(!strcmp(sec,"SEGURO")){
+      Serial.println(securityStatus); 
+      if(securityStatus > 0){
         deviceComprometido = true;
-      }
+      } else{
+        deviceComprometido = false;
+      }   
     }
 
   } else {
@@ -287,19 +290,16 @@ void loop() {
   unsigned long now = millis();
   if(parada || deviceComprometido){
      Serial.println("Sistema parado ");
+     while(1);
   }else{
     if (now - lastMsg > 500) {
       lastMsg = now;
       server.handleClient();
       if(deviceComprometido){
         Serial.println(" Alerta de dispositivo comprometido! ");
-        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li, \"alerta_seguranca\": \"%s\"}",
-                  agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR, securityAlertMsg);         
-      }else{
-        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li}",
-                agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR); 
-        
       }
+      sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li, \"alerta_seguranca\": \"%li\"}",
+                  agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR, securityStatus);   
       if(devices.size()>0){
         Serial.print("Dispositivos agregados: ");
         Serial.println(devices.size());

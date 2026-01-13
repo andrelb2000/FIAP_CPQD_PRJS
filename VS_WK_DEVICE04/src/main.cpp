@@ -41,10 +41,10 @@ DHT dht(TEMP_PIN, DHT22);
 // Variável booleana indicando violação física do dispositivo
 static bool violacaoFisica = false;
 // Variável enviada pelo serviço REST com valor "SEGURO" ou "VIOLADO"
-static String securityStatus = "SEGURO";
+static int securityStatus = 0;
 
 float minGasLevel = 4095.0; // Valor máximo para ADC 12 bits
-float maxGasLevel = 0.0;    // Valor mínimo para ADC 10 bits
+float maxGasLevel = 0.0;    // Valor mínimo para ADC 12 bits
 
 void connectWiFi() {
   Serial.print("[WiFi] Conectando...");
@@ -72,7 +72,7 @@ void TestarViolacao() {
   int val = digitalRead(VIOLATION_PIN);
   if (val == LOW) {
     violacaoFisica = true;
-    securityStatus = "VIOLADO";
+    securityStatus = 1;
   }
   Serial.print("Violacao fisica: "); Serial.println(violacaoFisica ? "SIM" : "NAO");
 }
@@ -155,14 +155,14 @@ int sample_count = 0;
 void loop() {
   unsigned long now = millis();
   if (now - lastMsg > 2000) {
-    lastMsg = now;
-    // Atualiza estado de violação física a cada ciclo
-    TestarViolacao();
+    lastMsg = now;    
     if (violacaoFisica) {
       // Em caso de violação, apenas reporta no monitor serial e não faz mais nada
       Serial.println("!!!! VIOLACAO FISICA DETECTADA: envio de dados suspenso !!!!");
     } else {
       readSensors();
+      // Atualiza estado de violação física a cada ciclo
+      TestarViolacao();
       Serial.println("Conectado no WiFi há 1s");
       Serial.print("IP Local: ");
       Serial.println(WiFi.localIP());

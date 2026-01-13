@@ -19,7 +19,7 @@ const char* MQTT_SUB_TOPIC = "/v1.6/devices/fiap_ambiente/parada/lv";
 const char* MQTT_PUB_TOPIC = "/v1.6/devices/fiap_ambiente";
 
 
-#define NOME_CONCENTRADOR 2
+#define NOME_CONCENTRADOR 3
 
 
 char msg[255];

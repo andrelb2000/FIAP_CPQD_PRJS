@@ -68,7 +68,8 @@ static bool violacaoFisica = false;
 static bool violacaoFirmware = false;
 
 // Variável enviada pelo serviço REST com valor "SEGURO" ou "VIOLADO"
-static String securityStatus = "SEGURO";
+static int securityStatus = 0;
+
 
 float minGasLevel = 4095.0; // Valor máximo para ADC 12 bits
 float maxGasLevel = 0.0;    // Valor mínimo para ADC 10 bits
@@ -178,7 +179,7 @@ void TestarViolacao() {
   int val = digitalRead(VIOLATION_PIN);
   if (val == LOW) {
     violacaoFisica = true;
-    securityStatus = "VIOLADO";
+    securityStatus = 1;
   }
   Serial.print("Violacao fisica: "); Serial.println(violacaoFisica ? "SIM" : "NAO");
 }
@@ -211,6 +212,7 @@ void readSensors() {
   Serial.print("Média Gas: "); Serial.println(sensor.avgGas());
 }
 
+/******************************************************************** */
 // Envia via HTTP POST o rótulo e as médias atuais do objeto `sensor`.
 void sendSensorAverages() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -274,7 +276,7 @@ void setup() {
   pinMode(FIRM_VIOLATION_PIN, INPUT_PULLUP);
   if (!verifyFirmwareIntegrity()) {
     violacaoFirmware = true;
-    securityStatus = "FIRMWARE VIOLADO";
+    securityStatus = 3;
     Serial.println("Sistema bloqueado.");
     sendSensorAverages();
     while (true) {
@@ -286,18 +288,15 @@ void loop() {
   unsigned long now = millis();
   if (now - lastMsg > 2000) {
     lastMsg = now;
-    // Atualiza estado de violação física a cada ciclo
-    TestarViolacao();
-    readFirmViolation(FIRM_VIOLATION_PIN, sample_size, 20);
+
     if (violacaoFisica || violacaoFirmware) {
       // Em caso de violação, apenas reporta no monitor serial e não faz mais nada
-      Serial.println("!!!! VIOLACAO FISICA/Firmware DETECTADA: envio de dados suspenso !!!!");
-      sendSensorAverages();
-      while(true) {
-        delay(1000);
-      }
+      Serial.println("!!!! VIOLACAO FISICA/Firmware DETECTADA: envio de dados suspenso !!!!");      
     } else {
       readSensors();
+      // Atualiza estado de violação física a cada ciclo
+      TestarViolacao();
+      readFirmViolation(FIRM_VIOLATION_PIN, sample_size, 20);
       Serial.println("Conectado no WiFi há 1s");
       Serial.print("IP Local: ");
       Serial.println(WiFi.localIP());
@@ -309,7 +308,7 @@ void loop() {
       Serial.println("-----------------------------------");
       if (!verifyFirmwareIntegrity()) {
         violacaoFirmware = true;
-        securityStatus = "FIRMWARE VIOLADO";
+        securityStatus = 3;
         Serial.println("Sistema sera bloqueado.");        
       } 
       sendSensorAverages();
