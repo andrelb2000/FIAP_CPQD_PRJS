@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "author": "Uri Shaked",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 76.8, "left": -283.16, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht1", "top": 9.9, "left": -91.8, "attrs": {} },
+    { "type": "wokwi-gas-sensor", "id": "gas1", "top": 204.3, "left": -137, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": -89.8,
+      "left": -153.6,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "text1",
+      "top": -115.2,
+      "left": -201.6,
+      "attrs": { "text": "Simulador de invólucro violado" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "dht1:VCC", "esp:3V3", "#8f4814", [ "v0", "h-28.8", "v-86.4", "h-182.4", "v67.2" ] ],
+    [ "dht1:GND", "esp:GND.2", "black", [ "v38.4", "h-86.4", "v-57.6", "h-9.6" ] ],
+    [ "gas1:GND", "dht1:GND", "black", [ "h48", "v-116", "h-28.8" ] ],
+    [
+      "gas1:VCC",
+      "esp:3V3",
+      "#8f4814",
+      [ "h38.4", "v-0.9", "h19.2", "v-259.2", "h-355.2", "v115.2" ]
+    ],
+    [
+      "gas1:AOUT",
+      "esp:33",
+      "magenta",
+      [ "h19.2", "v-28.8", "h-172.8", "v115.2", "h-153.6", "v-134.4" ]
+    ],
+    [ "dht1:SDA", "esp:15", "green", [ "v19.2", "h-95.9", "v105.6" ] ],
+    [ "btn1:2.l", "esp:GND.2", "black", [ "h0" ] ],
+    [ "esp:4", "btn1:1.r", "yellow", [ "h9.6", "v-259.2", "h115.2", "v-38.4" ] ]
+  ],
+  "dependencies": {}
+}

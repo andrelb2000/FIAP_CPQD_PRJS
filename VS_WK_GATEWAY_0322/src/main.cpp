@@ -1,19 +1,106 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <vector>
-#include <cstring>
 #include <algorithm>
 #include "SensorData.h"
+
+// --- Simple asymmetric-demo keys (toy example for academic/demo use) ---
+// We implement a very small and insecure "asymmetric" toy cipher:
+// - Public key: random bytes
+// - Private key: bytes such that private = (256 - public) mod 256
+// - Encryption (client): cipher[i] = (plain[i] + public[i%L]) mod 256
+// - Decryption (server): plain[i] = (cipher[i] + private[i%L]) mod 256
+// This is NOT secure cryptography. It's only for demonstration/teaching.
+
+std::vector<uint8_t> pubKey;
+std::vector<uint8_t> privKey;
+int keyVersion = 0;
+unsigned long lastKeyRotate = 0;
+const unsigned long KEY_ROTATE_MS = 60 * 1000; // rotate every 60s for demo
+const size_t KEY_LEN = 16; // 16 bytes public key
+
+String bytesToHex(const std::vector<uint8_t>& v) {
+  String s = "";
+  const char *hex = "0123456789ABCDEF";
+  for (size_t i = 0; i < v.size(); ++i) {
+    uint8_t b = v[i];
+    s += hex[(b >> 4) & 0x0F];
+    s += hex[b & 0x0F];
+  }
+  return s;
+}
+
+std::vector<uint8_t> hexToBytes(const String &hexStr) {
+  std::vector<uint8_t> out;
+  int len = hexStr.length();
+  for (int i = 0; i + 1 < len; i += 2) {
+    char c1 = hexStr.charAt(i);
+    char c2 = hexStr.charAt(i + 1);
+    auto val = [](char c)->int{
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+      if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+      return 0;
+    };
+    out.push_back((uint8_t)((val(c1) << 4) | val(c2)));
+  }
+  return out;
+}
+
+void generateKeyPair() {
+  pubKey.clear();
+  privKey.clear();
+  randomSeed(micros());
+  for (size_t i = 0; i < KEY_LEN; ++i) {
+    uint8_t b = (uint8_t)random(0, 256);
+    pubKey.push_back(b);
+    privKey.push_back((uint8_t)((256 - b) & 0xFF));
+  }
+  keyVersion++;
+  lastKeyRotate = millis();
+  Serial.print("[KEY] New keypair generated v="); Serial.println(keyVersion);
+}
+
+String getPubKeyHex() {
+  return bytesToHex(pubKey);
+}
+
+// Decrypt the hex-encoded cipher produced by the toy encryption above.
+// Returns true on success and fills `outPlain` with the plaintext string.
+bool decryptEncryptedField(const String &encHex, String &outPlain) {
+  if (privKey.empty()) return false;
+  std::vector<uint8_t> cipher = hexToBytes(encHex);
+  std::string s;
+  s.reserve(cipher.size());
+  for (size_t i = 0; i < cipher.size(); ++i) {
+    uint8_t p = (uint8_t)((cipher[i] + privKey[i % privKey.size()]) & 0xFF);
+    s.push_back((char)p);
+  }
+  outPlain = String(s.c_str(), s.size());
+  return true;
+}
+
+// Helper used only for local tests: encrypt plain with current public key
+String encryptWithPublic(const String &plain) {
+  if (pubKey.empty()) return String("");
+  std::vector<uint8_t> bytes;
+  for (size_t i = 0; i < plain.length(); ++i) bytes.push_back((uint8_t)plain.charAt(i));
+  std::vector<uint8_t> cipher;
+  cipher.reserve(bytes.size());
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    cipher.push_back((uint8_t)((bytes[i] + pubKey[i % pubKey.size()]) & 0xFF));
+  }
+  return bytesToHex(cipher);
+}
 
 const char* WIFI_SSID = "Wokwi-GUEST";
 const char* WIFI_PASSWORD = "";
 
 const char* MQTT_BROKER = "industrial.api.ubidots.com";
-const int   MQTT_PORT   = 8883;
+const int   MQTT_PORT   = 1883;
 const char* MQTT_CLIENTID = "";
 
 const char* UBIDOTS_TOKEN = "BBUS-MqjWH3tL051NmtmeNEZ38K8SCwPydT"; // Username no MQTT
@@ -27,16 +114,30 @@ const char* MQTT_PUB_TOPIC = "/v1.6/devices/fiap_ambiente";
 char msg[1000];
 int   parada = 0;
 
-WiFiClientSecure espSecureClient;
-PubSubClient mqtt(espSecureClient);
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
 WebServer server(80);
 SensorData agg = SensorData();
+int securityStatus = 0;
+
 
 // Array global para guardar dados de múltiplos dispositivos
 std::vector<SensorData> devices;
 bool hasData = false;
 bool deviceComprometido = false;
 char securityAlertMsg[] = "DISPOSITIVO OK";
+
+// New endpoint: returns current public key (hex) and version
+void handleGetPubKey() {
+  // rotate if needed on-demand
+  Serial.println("\n Entrei no GET/pubkey ");
+  if (pubKey.empty() || (millis() - lastKeyRotate) > KEY_ROTATE_MS) generateKeyPair();
+  String out = "{";
+  out += "\"pubkey\":\"" + getPubKeyHex() + "\",";
+  out += "\"version\":" + String(keyVersion);
+  out += "}";
+  server.send(200, "application/json", out);
+}
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("[MQTT] Mensagem em [");
@@ -164,26 +265,63 @@ void handlePostData() {
       server.client().stop();
       return;
     }
-    if (!doc.containsKey("label") || !doc.containsKey("temp") || !doc.containsKey("gas")) {
-      server.send(400, "application/json", "{\"error\":\"missing fields (label, temp, gas)\"}");
-      server.client().stop();
-      return;
-    }
-    double tempVal = doc["temp"].as<double>();
-    int gasVal = doc["gas"].as<int>();
-    incoming.label = String((const char*)doc["label"].as<const char*>());
-    incoming.add(tempVal, gasVal);
-    valid = true;
-
-    if (!doc.containsKey("security") ) {
-      Serial.println(" Alerta: dado sem campo de segurança ");
+    // If an encrypted payload is present, decrypt it and parse inner JSON
+    if (doc.containsKey("enc")) {
+      String encHex = String((const char*)doc["enc"].as<const char*>());
+      String decrypted;
+      bool ok = decryptEncryptedField(encHex, decrypted);
+      Serial.println("[POST] Received encrypted field (hex): ");
+      Serial.println(encHex);
+      if (ok) {
+        Serial.println("[POST] Decrypted payload: ");
+        Serial.println(decrypted);
+        // Try to parse decrypted JSON
+        DynamicJsonDocument inner(512);
+        DeserializationError ierr = deserializeJson(inner, decrypted);
+        if (!ierr && inner.containsKey("label") && inner.containsKey("temp") && inner.containsKey("gas")) {
+          double tempVal = inner["temp"].as<double>();
+          int gasVal = inner["gas"].as<int>();
+          incoming.label = String((const char*)inner["label"].as<const char*>());
+          incoming.add(tempVal, gasVal);
+          valid = true;
+          if (inner.containsKey("security")) {
+            securityStatus = inner["security"].as<int>();
+            deviceComprometido = securityStatus > 0;
+          }
+        } else {
+          // decrypted not valid JSON -> treat as error
+          server.send(400, "application/json", "{\"error\":\"invalid decrypted json\"}");
+          server.client().stop();
+          return;
+        }
+      } else {
+        server.send(400, "application/json", "{\"error\":\"decryption failed\"}");
+        server.client().stop();
+        return;
+      }
     } else {
-      const char* sec = doc["security"];
-      strcpy(securityAlertMsg, sec);
-      Serial.print(" Campo de segurança recebido: ");
-      Serial.println(sec);
-      if(!strcmp(sec,"SEGURO")){
-        deviceComprometido = true;
+      if (!doc.containsKey("label") || !doc.containsKey("temp") || !doc.containsKey("gas")) {
+        server.send(400, "application/json", "{\"error\":\"missing fields (label, temp, gas)\"}");
+        server.client().stop();
+        return;
+      }
+      double tempVal = doc["temp"].as<double>();
+      int gasVal = doc["gas"].as<int>();
+      incoming.label = String((const char*)doc["label"].as<const char*>());
+      incoming.add(tempVal, gasVal);
+      valid = true;
+
+      if (!doc.containsKey("security") ) {
+        Serial.println(" Alerta: dado sem campo de segurança ");
+      } else {
+        securityStatus = doc["security"].as<int>();
+        Serial.print(" Campo de segurança recebido: ");
+        Serial.println(securityStatus); 
+        if(securityStatus > 0){
+          deviceComprometido = true;
+        } else{
+          deviceComprometido = false;
+        }   
       }
     }
 
@@ -236,8 +374,23 @@ void handlePostData() {
   Serial.println(securityAlertMsg);
   
   agg = aggregateDevices(devices);
-
   server.send(200, "application/json", "{\"status\":\"ok\"}");
+  server.client().stop();
+
+  // For demonstrative tests: print aggregate plain and an encrypted sample
+  if (!pubKey.size()) generateKeyPair();
+  DynamicJsonDocument dbg(256);
+  dbg["label"] = agg.label;
+  JsonArray tdbg = dbg.createNestedArray("temp");
+  for (double v : agg.temps) tdbg.add(v);
+  JsonArray gdbg = dbg.createNestedArray("gas");
+  for (int v : agg.gasLevels) gdbg.add(v);
+  String dbgStr; serializeJson(dbg, dbgStr);
+  String sampleEnc = encryptWithPublic(dbgStr);
+  Serial.println("[DEBUG] Aggregate JSON (plain):");
+  Serial.println(dbgStr);
+  Serial.println("[DEBUG] Aggregate JSON encrypted with current pubkey (hex):");
+  Serial.println(sampleEnc);
   server.client().stop();
 }
 void handleGetData() {
@@ -272,10 +425,9 @@ unsigned long lastMsg = 0;
 void setup() {
   Serial.begin(115200);
   connectWiFi();
-  espSecureClient.setInsecure();
-
   server.on("/data", HTTP_POST, handlePostData);
   server.on("/data", HTTP_GET, handleGetData);
+  server.on("/pubkey", HTTP_GET, handleGetPubKey);
   server.on("/status", HTTP_GET, handleStatus);
   server.begin();
   Serial.println("REST server iniciado em /data (POST/GET)");
@@ -291,19 +443,16 @@ void loop() {
   unsigned long now = millis();
   if(parada || deviceComprometido){
      Serial.println("Sistema parado ");
+     while(1);
   }else{
     if (now - lastMsg > 500) {
       lastMsg = now;
       server.handleClient();
       if(deviceComprometido){
         Serial.println(" Alerta de dispositivo comprometido! ");
-        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li, \"alerta_seguranca\": \"%s\"}",
-                  agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR, securityAlertMsg);         
-      }else{
-        sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li}",
-                agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR); 
-        
       }
+      sprintf(msg,"{\"temperatura\": %3.2lf, \"gas\": %5.1lf, \"parada\": %1i, \"concentrador\": %li, \"alerta_seguranca\": \"%li\"}",
+                  agg.avgTemp(),agg.avgGas(),parada, NOME_CONCENTRADOR, securityStatus);   
       if(devices.size()>0){
         Serial.print("Dispositivos agregados: ");
         Serial.println(devices.size());
